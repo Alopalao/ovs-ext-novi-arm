@@ -25,4 +25,4 @@ RUN cd openvswitch-*/ \
  && patch -p2 < /tmp/add-noviflow-experimenter-actions.patch \
  && DEB_BUILD_OPTIONS='nocheck' debuild -b -uc -us
 
-RUN tar -czf ovs-ext-novi.tgz openvswitch-*.deb
+RUN tar -czf ovs-ext-novi.tgz *.deb
