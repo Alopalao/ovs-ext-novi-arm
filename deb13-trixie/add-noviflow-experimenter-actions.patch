@@ -1,0 +1,335 @@
+--- a/openvswitch-3.5.0/build-aux/extract-ofp-actions	2025-02-17 12:13:22.593884437 +0000
++++ b/openvswitch-3.5.0/build-aux/extract-ofp-actions	2025-12-09 07:53:54.076707965 +0000
+@@ -19,6 +19,7 @@
+ # Map from vendor name to the length of the action header.
+ vendor_map = {"OF": (0x00000000, 4),
+               "ONF": (0x4f4e4600, 10),
++              "NOVI": (0xff000002, 10),
+               "NX": (0x00002320, 10)}
+ 
+ # Basic types used in action arguments.
+--- a/openvswitch-3.5.0/build-aux/extract-ofp-msgs	2025-02-17 12:13:22.593884437 +0000
++++ b/openvswitch-3.5.0/build-aux/extract-ofp-msgs	2025-12-09 07:53:54.076707965 +0000
+@@ -16,6 +16,7 @@
+ 
+ NX_VENDOR_ID = 0x00002320
+ ONF_VENDOR_ID = 0x4f4e4600
++NOVI_VENDOR_ID = 0xff000002
+ 
+ OFPT_VENDOR = 4
+ OFPT10_STATS_REQUEST = 16
+@@ -200,6 +201,8 @@
+                 else:
+                     hdrs = (version, OFPT11_STATS_REPLY, OFPST_VENDOR,
+                             NX_VENDOR_ID, number)
++            elif type_ == 'NOVI':
++                hdrs = (version, OFPT_VENDOR, 0, NOVI_VENDOR_ID, number)
+             else:
+                 fatal("type '%s' unknown" % type_)
+ 
+--- a/openvswitch-3.5.0/include/openflow/openflow-common.h	2025-02-17 12:13:22.607884495 +0000
++++ b/openvswitch-3.5.0/include/openflow/openflow-common.h	2025-12-09 07:53:54.076707965 +0000
+@@ -110,6 +110,7 @@
+ #define NX_VENDOR_ID    0x00002320 /* Nicira. */
+ #define ONF_VENDOR_ID   0x4f4e4600 /* Open Networking Foundation. */
+ #define INTEL_VENDOR_ID 0x0000AA01 /* Intel */
++#define NOVI_VENDOR_ID  0xff000002 /* Noviflow */
+ 
+ #define OFP_MAX_TABLE_NAME_LEN 32
+ #define OFP_MAX_PORT_NAME_LEN  16
+--- a/openvswitch-3.5.0/include/openvswitch/ofp-actions.h	2025-02-17 12:13:22.608884500 +0000
++++ b/openvswitch-3.5.0/include/openvswitch/ofp-actions.h	2025-12-09 07:53:54.076707965 +0000
+@@ -127,6 +127,13 @@
+     OFPACT(CHECK_PKT_LARGER, ofpact_check_pkt_larger, ofpact,           \
+            "check_pkt_larger")                                          \
+                                                                         \
++    /* Other. */                                                        \
++    OFPACT(PUSH_INT,        ofpact_null,        ofpact, "push_int")     \
++    OFPACT(ADD_INT_METADATA, ofpact_null,       ofpact,                 \
++           "add_int_metadata")                                          \
++    OFPACT(POP_INT,         ofpact_null,        ofpact, "pop_int")      \
++    OFPACT(SEND_REPORT,     ofpact_null,        ofpact, "send_report")  \
++                                                                        \
+     /* Debugging actions.                                               \
+      *                                                                  \
+      * These are intentionally undocumented, subject to change, and     \
+--- a/openvswitch-3.5.0/lib/ofp-actions.c	2025-02-17 12:13:22.637884620 +0000
++++ b/openvswitch-3.5.0/lib/ofp-actions.c	2025-12-09 07:53:54.080708008 +0000
+@@ -378,6 +378,12 @@
+ 
+     /* NX1.0+(255): void. */
+     NXAST_RAW_DEBUG_RECIRC,
++
++/* ## --------------------------- ## */
++/* ## Noviflow extension actions. ## */
++/* ## --------------------------- ## */
++    /* NOVI1.3+(65280): struct novi_action_header. */
++    NOVI_RAW_ACTIONS,
+ };
+ 
+ /* OpenFlow actions are always a multiple of 8 bytes in length. */
+@@ -507,6 +513,10 @@
+     case OFPACT_DEC_NSH_TTL:
+     case OFPACT_CHECK_PKT_LARGER:
+     case OFPACT_DELETE_FIELD:
++    case OFPACT_PUSH_INT:
++    case OFPACT_ADD_INT_METADATA:
++    case OFPACT_POP_INT:
++    case OFPACT_SEND_REPORT:
+         return ofpact_next(ofpact);
+ 
+     case OFPACT_CLONE:
+@@ -6662,6 +6672,155 @@
+     return 0;
+ }
+ 
++/* NOVI Actions. */
++struct novi_action_header {
++    ovs_be16 type;                  /* OFPAT_VENDOR. */
++    ovs_be16 len;                   /* At least 16. */
++    ovs_be32 vendor;                /* NOVI_VENDOR_ID 0xff000002 */
++    ovs_be16 subtype;               /* Customer ID 0xff + Reserved for future use 0x00 */
++    ovs_be16 novi_action_type;      /* NoviFlow action type */
++    uint8_t pad[4];
++};
++OFP_ASSERT(sizeof(struct novi_action_header) == 16);
++
++static enum ofperr
++decode_NOVI_RAW_ACTIONS(const struct novi_action_header *noviact,
++                            enum ofp_version ofp_version OVS_UNUSED,
++                            struct ofpbuf *out)
++{
++    switch(ntohs(noviact->novi_action_type)) {
++    case 0x000c:
++    	ofpact_put_PUSH_INT(out);
++	break;
++    case 0x000d:
++    	ofpact_put_ADD_INT_METADATA(out);
++	break;
++    case 0x000e:
++    	ofpact_put_POP_INT(out);
++	break;
++    case 0x000f:
++    	ofpact_put_SEND_REPORT(out);
++	break;
++    }
++    return 0;
++}
++
++static void
++encode_PUSH_INT(const struct ofpact_null *null OVS_UNUSED,
++                 enum ofp_version ofp_version OVS_UNUSED, struct ofpbuf *out)
++{
++    put_NOVI_ACTIONS(out)->novi_action_type = htons(0x000c);
++}
++
++static void
++encode_ADD_INT_METADATA(const struct ofpact_null *null OVS_UNUSED,
++                 enum ofp_version ofp_version OVS_UNUSED, struct ofpbuf *out)
++{
++    put_NOVI_ACTIONS(out)->novi_action_type = htons(0x000d);
++}
++
++static void
++encode_POP_INT(const struct ofpact_null *null OVS_UNUSED,
++                 enum ofp_version ofp_version OVS_UNUSED, struct ofpbuf *out)
++{
++    put_NOVI_ACTIONS(out)->novi_action_type = htons(0x000e);
++}
++
++static void
++encode_SEND_REPORT(const struct ofpact_null *null OVS_UNUSED,
++                 enum ofp_version ofp_version OVS_UNUSED, struct ofpbuf *out)
++{
++    put_NOVI_ACTIONS(out)->novi_action_type = htons(0x000f);
++}
++
++static char * OVS_WARN_UNUSED_RESULT
++parse_PUSH_INT(const char *arg OVS_UNUSED,
++                const struct ofpact_parse_params *pp)
++{
++    ofpact_put_PUSH_INT(pp->ofpacts);
++    return NULL;
++}
++
++static char * OVS_WARN_UNUSED_RESULT
++parse_ADD_INT_METADATA(const char *arg OVS_UNUSED,
++                const struct ofpact_parse_params *pp)
++{
++    ofpact_put_ADD_INT_METADATA(pp->ofpacts);
++    return NULL;
++}
++
++static char * OVS_WARN_UNUSED_RESULT
++parse_POP_INT(const char *arg OVS_UNUSED,
++                const struct ofpact_parse_params *pp)
++{
++    ofpact_put_POP_INT(pp->ofpacts);
++    return NULL;
++}
++
++static char * OVS_WARN_UNUSED_RESULT
++parse_SEND_REPORT(const char *arg OVS_UNUSED,
++                const struct ofpact_parse_params *pp)
++{
++    ofpact_put_SEND_REPORT(pp->ofpacts);
++    return NULL;
++}
++
++static void
++format_PUSH_INT(const struct ofpact_null *a OVS_UNUSED,
++                 const struct ofpact_format_params *fp)
++{
++    ds_put_format(fp->s, "%spush_int%s", colors.value, colors.end);
++}
++
++static void
++format_ADD_INT_METADATA(const struct ofpact_null *a OVS_UNUSED,
++                 const struct ofpact_format_params *fp)
++{
++    ds_put_format(fp->s, "%sadd_int_metadata%s", colors.value, colors.end);
++}
++
++static void
++format_POP_INT(const struct ofpact_null *a OVS_UNUSED,
++                 const struct ofpact_format_params *fp)
++{
++    ds_put_format(fp->s, "%spop_int%s", colors.value, colors.end);
++}
++
++static void
++format_SEND_REPORT(const struct ofpact_null *a OVS_UNUSED,
++                 const struct ofpact_format_params *fp)
++{
++    ds_put_format(fp->s, "%ssend_report%s", colors.value, colors.end);
++}
++
++static enum ofperr
++check_PUSH_INT(const struct ofpact_null *a OVS_UNUSED,
++                const struct ofpact_check_params *cp OVS_UNUSED)
++{
++    return 0;
++}
++
++static enum ofperr
++check_ADD_INT_METADATA(const struct ofpact_null *a OVS_UNUSED,
++                const struct ofpact_check_params *cp OVS_UNUSED)
++{
++    return 0;
++}
++
++static enum ofperr
++check_POP_INT(const struct ofpact_null *a OVS_UNUSED,
++                const struct ofpact_check_params *cp OVS_UNUSED)
++{
++    return 0;
++}
++
++static enum ofperr
++check_SEND_REPORT(const struct ofpact_null *a OVS_UNUSED,
++                const struct ofpact_check_params *cp OVS_UNUSED)
++{
++    return 0;
++}
++
+ /* Action structure for NXAST_CT.
+  *
+  * Pass traffic to the connection tracker.
+@@ -8253,6 +8412,10 @@
+     case OFPACT_DEBUG_SLOW:
+     case OFPACT_CHECK_PKT_LARGER:
+     case OFPACT_DELETE_FIELD:
++    case OFPACT_PUSH_INT:
++    case OFPACT_ADD_INT_METADATA:
++    case OFPACT_POP_INT:
++    case OFPACT_SEND_REPORT:
+         return ACTION_SLOT_INVALID;
+ 
+     default:
+@@ -8457,6 +8620,10 @@
+     case OFPACT_DEC_NSH_TTL:
+     case OFPACT_CHECK_PKT_LARGER:
+     case OFPACT_DELETE_FIELD:
++    case OFPACT_PUSH_INT:
++    case OFPACT_ADD_INT_METADATA:
++    case OFPACT_POP_INT:
++    case OFPACT_SEND_REPORT:
+     default:
+         return OVSINST_OFPIT11_APPLY_ACTIONS;
+     }
+@@ -9369,6 +9536,10 @@
+     case OFPACT_DEC_NSH_TTL:
+     case OFPACT_CHECK_PKT_LARGER:
+     case OFPACT_DELETE_FIELD:
++    case OFPACT_PUSH_INT:
++    case OFPACT_ADD_INT_METADATA:
++    case OFPACT_POP_INT:
++    case OFPACT_SEND_REPORT:
+     default:
+         return false;
+     }
+@@ -9870,7 +10041,7 @@
+     if (oah->type == htons(OFPAT_VENDOR)) {
+         /* Get vendor. */
+         hdrs.vendor = ntohl(oah->vendor);
+-        if (hdrs.vendor == NX_VENDOR_ID || hdrs.vendor == ONF_VENDOR_ID) {
++        if (hdrs.vendor == NX_VENDOR_ID || hdrs.vendor == ONF_VENDOR_ID || hdrs.vendor == NOVI_VENDOR_ID) {
+             /* Get extension subtype. */
+             const struct ext_action_header *nah;
+ 
+@@ -9998,6 +10169,7 @@
+     case 0:
+         break;
+ 
++    case NOVI_VENDOR_ID:
+     case NX_VENDOR_ID:
+     case ONF_VENDOR_ID: {
+         struct ext_action_header *nah = (struct ext_action_header *) oah;
+--- a/openvswitch-3.5.0/ofproto/ofproto-dpif-xlate.c	2025-02-17 12:13:22.661884720 +0000
++++ b/openvswitch-3.5.0/ofproto/ofproto-dpif-xlate.c	2025-12-09 07:53:54.084708050 +0000
+@@ -6132,6 +6132,10 @@
+         case OFPACT_WRITE_METADATA:
+         case OFPACT_CHECK_PKT_LARGER:
+         case OFPACT_DELETE_FIELD:
++        case OFPACT_PUSH_INT:
++        case OFPACT_ADD_INT_METADATA:
++        case OFPACT_POP_INT:
++        case OFPACT_SEND_REPORT:
+             break;
+ 
+         case OFPACT_CT:
+@@ -6452,6 +6456,10 @@
+         case OFPACT_NAT:
+         case OFPACT_CHECK_PKT_LARGER:
+         case OFPACT_DELETE_FIELD:
++        case OFPACT_PUSH_INT:
++        case OFPACT_ADD_INT_METADATA:
++        case OFPACT_POP_INT:
++        case OFPACT_SEND_REPORT:
+             /* These may not generate PACKET INs. */
+             break;
+ 
+@@ -7210,6 +7218,10 @@
+     case OFPACT_GOTO_TABLE:
+     case OFPACT_CHECK_PKT_LARGER:
+     case OFPACT_DELETE_FIELD:
++    case OFPACT_PUSH_INT:
++    case OFPACT_ADD_INT_METADATA:
++    case OFPACT_POP_INT:
++    case OFPACT_SEND_REPORT:
+     default:
+         break;
+     }
+@@ -7813,6 +7825,12 @@
+             }
+             break;
+         }
++        case OFPACT_PUSH_INT:
++        case OFPACT_ADD_INT_METADATA:
++        case OFPACT_POP_INT:
++        case OFPACT_SEND_REPORT:
++            /* Nothing to do. */
++            break;
+         }
+ 
+         /* Check if need to store this and the remaining actions for later

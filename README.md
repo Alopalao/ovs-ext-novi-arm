@@ -10,7 +10,7 @@ This repo contains an modified version of OpenVSwitch to support OpenFlow vendor
 
 Use the following commands to build (choose your debian version according to the dirs):
 ```
-cd deb12-bookworm
+cd deb13-trixie
 docker build -t ovs-ext-novi --pull .
 docker create --name ovs-ext-novi ovs-ext-novi
 docker cp ovs-ext-novi:/ovs-ext-novi.tgz .
