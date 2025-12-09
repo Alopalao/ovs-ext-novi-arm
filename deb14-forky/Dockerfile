@@ -1,6 +1,7 @@
-FROM debian:bookworm
+FROM debian:forky
 
-RUN apt-get update \
+RUN sed -i 's/Types: deb/Types: deb deb-src/g' /etc/apt/sources.list.d/debian.sources \
+ && apt-get update \
  && apt-get install -y --no-install-recommends \
             build-essential \
             cdbs \
@@ -8,14 +9,7 @@ RUN apt-get update \
             equivs \
             fakeroot
 
-COPY ./debian-forky.sources /etc/apt/sources.list.d/debian-forky.sources
-
-RUN export FORKY_KEY="04B5 4C3C DCA7 9751 B16B C6B5 2256 29DF 75B1 88BD" \
- && gpg --keyserver keyserver.ubuntu.com --recv-keys "$FORKY_KEY" \
- && gpg --output /usr/share/keyrings/debian-forky-keyring.gpg --export "$FORKY_KEY" \
- && apt-get update
-
-RUN apt source openvswitch/forky \
+RUN apt source openvswitch \
  && cd openvswitch-*/ \
  && mk-build-deps -ir -t "apt-get -o Debug::pkgProblemResolver=yes -y --no-install-recommends"
 

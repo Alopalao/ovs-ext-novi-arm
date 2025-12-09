@@ -8,9 +8,10 @@ This repo contains an modified version of OpenVSwitch to support OpenFlow vendor
 
 **Note**: check the releases page to download binary pre-built packages.
 
-Use the following commands to build:
+Use the following commands to build (choose your debian version according to the dirs):
 ```
-docker build -t ovs-ext-novi --pull --label "build=ovs-ext-novi" .
+cd deb14-forky
+docker build -t ovs-ext-novi --pull .
 docker create --name ovs-ext-novi ovs-ext-novi
 docker cp ovs-ext-novi:/ovs-ext-novi.tgz .
 docker rm -f ovs-ext-novi
